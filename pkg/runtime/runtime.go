@@ -93,19 +93,31 @@ func (r *Runtime) DeliveredEvent(ctx context.Context, msg *sarama.ConsumerMessag
 	r.HandleEvent(ctx, &ev)
 }
 
+type FeedLog struct {
+	old *Feed
+	new *Feed
+}
+
 func (r *Runtime) HandleEvent(ctx context.Context, event v1.Event) error {
 	log.L().Debug("handle event", logf.RID(r.id),
 		logf.Event(event), logf.EvID(event.ID()))
 
 	execer, feed := r.PrepareEvent(ctx, event)
-	feed = execer.Exec(ctx, feed)
+	new_feed := execer.Exec(ctx, feed)
 
 	// call callback once.
-	r.handleCallback(ctx, feed)
-	if nil != feed.Err {
-		log.Error("handle event", logf.Error(feed.Err),
+	r.handleCallback(ctx, new_feed)
+	if nil != new_feed.Err {
+		log.Error("handle event", logf.Error(new_feed.Err),
 			logf.ID(event.ID()), logf.Eid(event.Entity()), logf.Event(event))
 	}
+
+	byt, err := json.Marshal(FeedLog{feed, new_feed})
+	if nil != err {
+		log.Error("Marshal event error", logf.Error(new_feed.Err),
+			logf.ID(event.ID()), logf.Eid(event.Entity()), logf.Event(event))
+	}
+	r.dispatcher.DispatchToLog(ctx, byt)
 
 	return nil
 }
@@ -210,7 +222,7 @@ func (r *Runtime) prepareSystemEvent(ctx context.Context, event v1.Event) (*Exec
 			execFunc: DefaultEntity(ev.Entity()),
 			postFuncs: []Handler{
 				&handlerImpl{fn: r.handleTentacle},
-				&handlerImpl{fn: r.handleSubscribe},  //
+				&handlerImpl{fn: r.handleSubscribe}, //
 				&handlerImpl{fn: r.handleComputed},
 				&handlerImpl{fn: func(_ context.Context, feed *Feed) *Feed {
 					log.L().Info("create entity successed", logf.Eid(ev.Entity()),
@@ -478,6 +490,19 @@ func whichPrefix(targetPath, changePath string) string {
 	return targetPath
 }
 
+/*
+dev1: RT1
+dev3: RT2
+feed = dev1.yc1,yc2,yc3
+subTree = dev1.yc1,yc2,yc3  -> dev3.yc1,yc2,yc3
+
+type SubEndpoint struct { YC1
+	path         string = iotd-06a96c8d-c166-447c-afd1-63010636b362.properties.telemetry.src1
+	target       string = iotd-b10bcaa1-ba98-4e03-bece-6f852feb6edf
+	deliveryID   string = core/1234
+	expressionID string = /core/v1/expressions/usr-57bea3a2d74e21ebbedde8268610/iotd-b10bcaa1-ba98-4e03-bece-6f852feb6edf/properties.telemetry.yc1
+}
+*/
 func (r *Runtime) handleTentacle(ctx context.Context, feed *Feed) *Feed {
 	log.L().Debug("handle tentacle", logf.Eid(feed.EntityID),
 		logf.Any("changes", feed.Changes), logf.String("state", string(feed.State)))
@@ -485,40 +510,38 @@ func (r *Runtime) handleTentacle(ctx context.Context, feed *Feed) *Feed {
 	// 1. 检查 ret.path 和 订阅列表.
 	targets := make(map[string]string)
 	entityID := feed.EntityID
-	var patches = make(map[string]*v1.PatchData)
+	var patches = make(map[string][]*v1.PatchData)
 	for _, change := range feed.Changes {
 		for _, node := range r.subTree.
 			MatchPrefix(path.FmtWatchKey(entityID, change.Path)) {
 			subEnd, _ := node.(*SubEndpoint)
+			//sub 可以带 *， Path
 			subPath := mergePath(subEnd.path, change.Path)
 			targets[subEnd.deliveryID] = whichPrefix(targets[subEnd.deliveryID], subPath)
-			log.L().Debug("expression sub matched", logf.Eid(entityID), logf.Path(change.Path),
+			log.L().Debug("expression sub matched", logf.Eid(entityID),
+				logf.String("subPath", subPath), logf.Path(change.Path),
 				logf.Target(subEnd.target), logf.Path(subEnd.path), logf.ID(subEnd.deliveryID), logf.Expr(subEnd.Expression()))
 		}
 
 		// TODO: 提到for外存在优化空间.
 		for runtimeID, sendPath := range targets {
-			if sendPath == change.Path {
-				patches[runtimeID] = &v1.PatchData{
-					Path:     change.Path,
-					Operator: xjson.OpReplace.String(),
-					Value:    change.Value.Raw(),
-				}
-				continue
+			if _, ok := patches[runtimeID]; !ok {
+				patches[runtimeID] = make([]*v1.PatchData, 0)
 			}
 
 			// select send data.
 			stateIns, _ := NewEntity(feed.EntityID, feed.State)
 			sendVal := stateIns.Get(sendPath)
 			if tdtl.Undefined != sendVal.Type() {
-				patches[runtimeID] = &v1.PatchData{
-					Path:     sendPath,
+				patches[runtimeID] = append(patches[runtimeID], &v1.PatchData{
+					Path:     change.Path,
 					Operator: xjson.OpReplace.String(),
-					Value:    sendVal.Raw(),
-				}
+					Value:    change.Value.Raw(),
+				})
 			}
 		}
 	}
+	log.L().Debug("expression sub matched", logf.Any("len", len(patches)), logf.Any("patches", patches))
 
 	// 2. dispatch.send()
 	for runtimeID, sendData := range patches {
@@ -537,7 +560,7 @@ func (r *Runtime) handleTentacle(ctx context.Context, feed *Feed) *Feed {
 				v1.MetaSender:      entityID},
 			Data: &v1.ProtoEvent_Patches{
 				Patches: &v1.PatchDatas{
-					Patches: []*v1.PatchData{sendData},
+					Patches: sendData,
 				}},
 		})
 	}
@@ -729,8 +752,7 @@ func (r *Runtime) handleRawData(ctx context.Context, feed *Feed) *Feed {
 			log.L().Debug("extract RawData successful", logf.Eid(feed.EntityID),
 				logf.Any("raw", patch.Value.String()), logf.String("value", string(bytes)))
 
-
-			if !json.Valid(bytes){
+			if !json.Valid(bytes) {
 				log.L().Debug("RawData Json Valid Fail", logf.Eid(feed.EntityID),
 					logf.Any("raw", patch.Value.String()), logf.String("value", string(bytes)))
 				continue
