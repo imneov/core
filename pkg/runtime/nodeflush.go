@@ -34,8 +34,13 @@ import (
 	"github.com/tkeel-io/kit/log"
 )
 
-func (n *Node) FlushEntity(ctx context.Context, en Entity, feed *Feed) error {
-	log.L().Debug("flush entity", logf.Eid(en.ID()), logf.Value(string(en.Raw())))
+func (n *Node) FlushEntity(ctx context.Context, feed *Feed) error {
+	log.L().Debug("flush entity", logf.Eid(feed.EntityID), logf.Value(feed)))
+	return nil
+}
+
+func (n *Node) PersistentEntity(ctx context.Context, en Entity, feed *Feed) error {
+	log.L().Debug("persistent entity", logf.Eid(en.ID()), logf.Value(string(en.Raw())))
 	entityID := feed.EntityID
 	tenantID := en.GetProp("sysField._tenantId").String()
 	if tenantID == "" {
@@ -240,7 +245,7 @@ func (n *Node) RemoveEntity(ctx context.Context, en Entity, feed *Feed) error {
 	// recover entity state.
 	defer func() {
 		if nil != err {
-			if innerErr := n.FlushEntity(ctx, en, feed); nil != innerErr {
+			if innerErr := n.PersistentEntity(ctx, en, feed); nil != innerErr {
 				log.L().Error("remove entity failed, recover entity state failed", logf.Eid(en.ID()),
 					logf.Reason(err.Error()), logf.Error(innerErr), logf.Value(string(en.Raw())))
 			}

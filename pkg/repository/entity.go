@@ -111,6 +111,11 @@ func (e *entityResource) Decode(key, bytes []byte) error {
 	return nil
 }
 
+func (r *repo) FlushEntity(ctx context.Context, eid string, data []byte) error {
+	err := r.dao.FlushStoreResource(ctx, &entityResource{id: eid, data: data})
+	return errors.Wrap(err, "put entity repository")
+}
+
 func (r *repo) PutEntity(ctx context.Context, eid string, data []byte) error {
 	err := r.dao.StoreResource(ctx, &entityResource{id: eid, data: data})
 	return errors.Wrap(err, "put entity repository")

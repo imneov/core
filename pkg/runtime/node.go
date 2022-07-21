@@ -73,7 +73,11 @@ func (n *Node) Start(cfg NodeConf) error {
 		// create runtime instance.
 		log.L().Info("create runtime instance",
 			logf.ID(runtimeID), logf.Source(cfg.Sources[index]))
-		entityResouce := EntityResource{FlushHandler: n.FlushEntity, RemoveHandler: n.RemoveEntity}
+		entityResouce := EntityResource{
+			FlushHandler:      n.FlushEntity,
+			PersistentHandler: n.PersistentEntity,
+			RemoveHandler:     n.RemoveEntity,
+		}
 		runtime := NewRuntime(n.ctx, entityResouce, runtimeID, n.dispatch, n.resourceManager.Repo())
 		n.runtimes[runtimeID] = runtime
 		placement.Global().Append(placement.Info{ID: sourceIns.ID(), Flag: true})
@@ -339,7 +343,7 @@ func newExprInfo(expr *repository.Expression) ExpressionInfo {
 
 func (n *Node) Debug(req *go_restful.Request, resp *go_restful.Response) {
 	action := req.Request.URL.Query().Get("action")
-	runtimeID := req.Request.URL.Query().Get("runtime")
+	rid := req.Request.URL.Query().Get("runtime")
 	entityID := req.Request.URL.Query().Get("entity")
 	switch action {
 	case "nodelist":
@@ -353,19 +357,19 @@ func (n *Node) Debug(req *go_restful.Request, resp *go_restful.Response) {
 	case "cache":
 		n.cache(entityID, resp)
 	case "subtree":
-		ret := n.runtimes[runtimeID]
+		ret := n.runtimes[rid]
 		resp.Write([]byte(ret.subTree.String()))
 	case "evaltree":
-		ret := n.runtimes[runtimeID]
+		ret := n.runtimes[rid]
 		resp.Write([]byte(ret.evalTree.String()))
 	case "sub":
 		changePath := req.Request.URL.Query().Get("changePath")
-		rt, ok := n.runtimes[runtimeID]
+		rt, ok := n.runtimes[rid]
 		if ok {
 			ret := rt.subTree.MatchPrefix(path.FmtWatchKey(entityID, changePath))
 			resp.WriteAsJson(ret)
 		} else {
-			resp.WriteErrorString(501, "runtime <"+runtimeID+"> not found")
+			resp.WriteErrorString(501, "runtime <"+rid+"> not found")
 		}
 	default:
 		resp.WriteAsJson("Noop~")

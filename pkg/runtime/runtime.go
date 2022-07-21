@@ -32,11 +32,14 @@ const (
 	rawDataTelemetryType = "telemetry"
 )
 
-type EntityResourceFunc func(context.Context, Entity, *Feed) error
+type EntityFlushFunc func(context.Context, *Feed) error
+type EntityPersistentFunc func(context.Context, Entity, *Feed) error
+type EntityRemoveFunc func(context.Context, Entity, *Feed) error
 
 type EntityResource struct {
-	FlushHandler  EntityResourceFunc
-	RemoveHandler EntityResourceFunc
+	FlushHandler      EntityFlushFunc
+	PersistentHandler EntityPersistentFunc
+	RemoveHandler     EntityRemoveFunc
 }
 
 type Runtime struct {
@@ -141,7 +144,8 @@ func (r *Runtime) PrepareEvent(ctx context.Context, ev v1.Event) (*Execer, *Feed
 	case v1.ETSystem:
 		execer, feed := r.prepareSystemEvent(ctx, ev)
 		execer.postFuncs = append(execer.postFuncs,
-			&handlerImpl{fn: r.handlePersistent})
+			&handlerImpl{fn: r.handlePersistent},
+			&handlerImpl{fn: r.handleFlush})
 		return execer, feed
 	case v1.ETEntity:
 		e, _ := ev.(v1.PatchEvent)
@@ -651,6 +655,12 @@ func (r *Runtime) handleCallback(ctx context.Context, feed *Feed) error {
 	return errors.Wrap(err, "handle callback")
 }
 
+func (r *Runtime) handleFlush(ctx context.Context, feed *Feed) *Feed {
+	log.L().Debug("handle persistent", logf.Eid(feed.EntityID))
+	r.entityResourcer.FlushHandler(ctx, feed)
+	return feed
+}
+
 func (r *Runtime) handlePersistent(ctx context.Context, feed *Feed) *Feed {
 	log.L().Debug("handle persistent", logf.Eid(feed.EntityID))
 	en, ok := r.entities[feed.EntityID]
@@ -658,7 +668,7 @@ func (r *Runtime) handlePersistent(ctx context.Context, feed *Feed) *Feed {
 		// entity has been deleted.
 		return feed
 	}
-	r.entityResourcer.FlushHandler(ctx, en, feed)
+	r.entityResourcer.PersistentHandler(ctx, en, feed)
 	return feed
 }
 

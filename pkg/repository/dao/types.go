@@ -57,6 +57,7 @@ type IDao interface {
 	WatchResource(ctx context.Context, rev int64, prefix string, handler WatchResourceFunc)
 
 	// resource store interfaces.
+	FlushStoreResource(ctx context.Context) error
 	StoreResource(ctx context.Context, res Resource) error
 	GetStoreResource(ctx context.Context, res Resource) (Resource, error)
 	RemoveStoreResource(ctx context.Context, res Resource) error
