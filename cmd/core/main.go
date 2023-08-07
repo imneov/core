@@ -26,6 +26,10 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/google/gops/agent"
+	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
 	corev1 "github.com/tkeel-io/core/api/core/v1"
 	metricsv1 "github.com/tkeel-io/core/api/metrics/v1"
 	opsv1 "github.com/tkeel-io/core/api/ops/v1"
@@ -59,10 +63,6 @@ import (
 	"github.com/tkeel-io/core/pkg/util/discovery"
 	_ "github.com/tkeel-io/core/pkg/util/transport"
 	"github.com/tkeel-io/core/pkg/version"
-
-	_ "github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/pkg/errors"
-	"github.com/spf13/cobra"
 	"github.com/tkeel-io/kit/app"
 	"github.com/tkeel-io/kit/log"
 	"github.com/tkeel-io/kit/transport"
@@ -157,6 +157,10 @@ func core(cmd *cobra.Command, args []string) {
 	httpProxySrv := http.NewServer(fmt.Sprintf(":%d", config.Get().Proxy.HTTPPort))
 	grpcProxySrv := grpc.NewServer(fmt.Sprintf(":%d", config.Get().Proxy.GRPCPort))
 	serverList = append(serverList, httpProxySrv, grpcProxySrv)
+
+	if err := agent.Listen(agent.Options{}); err != nil {
+		log.Fatal(err)
+	}
 
 	coreApp := app.New(config.Get().Server.AppID,
 		&log.Conf{
